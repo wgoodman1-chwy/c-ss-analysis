@@ -1,5 +1,9 @@
 source("L:/Data Science/R Scripts/utils.R")
 cItems <- dbGetQuery(vertica,"select * from sandbox_supply_chain.wmg_c_lifts")
+actuals <- dbGetQuery(vertica,"Select a.* from sandbox_supply_chain.akabra_hist_ss_dos10 a
+join chewybi.products p on product_part_number = item 
+where run_date = '20191029'
+and product_abc_code = 'C'")
 targ <- seq(0.75,0.95,0.01)
 cItems <- cItems[!is.infinite(cItems$total_ss),]
 cItems <- cItems[!is.nan(cItems$total_ss),]
@@ -7,17 +11,20 @@ cItems <- cItems[!is.na(cItems$total_ss),]
 cItems$total_ss <- ifelse(cItems$total_ss > 60,60,cItems$total_ss)
 cItems$total_ss <- ifelse(cItems$total_ss < 6,6,cItems$total_ss)
 cItems$slChar <- as.character(cItems$sl)
+colnames(actuals)[ncol(actuals)] <- "curr_sl"
+cItems <- merge(cItems,actuals[,c("item","location","curr_sl")],by = c("item","location"),all.x = T)
 impact <- ldply(targ,function(x){
   sub <- cItems[cItems$slChar == x,]
   lessThan <- sub[sub$min_safetystk < sub$total_ss,]
   lessThan$increment <- (lessThan$total_ss - lessThan$min_safetystk) * lessThan$avedemqty
   lessThan$increment_dollars <- (lessThan$total_ss - lessThan$min_safetystk) * lessThan$avedemqty * lessThan$unitcost
-
+  lessThan$prevented <- (lessThan$sl - ifelse(is.na(lessThan$curr_sl),0,lessThan$curr_sl)) * lessThan$avedemqty
   data.frame(sl = as.numeric(x),
              ss_increase = sum(lessThan$increment),
              dollar_increase = sum(lessThan$increment_dollars),
              increase_items = nrow(lessThan),
-             totalItems = nrow(sub))
+             totalItems = nrow(sub),
+             prevented = sum(lessThan$prevented))
 })
 library(scales)
 ggplot(impact,aes(x = sl,y = ss_increase)) +
@@ -54,6 +61,7 @@ ggplot(ceilingImpact,aes(x = sl,y = ss_decrease)) +
 
 tops <- unique(cItems[,c("item","location","avedemqty")])
 tops <- tops[order(-tops$avedemqty),]
+all <- tops
 tops <- tops[1:floor(nrow(tops) / 2),]               
 tops <- merge(tops[,c("item","location")],cItems,by = c("item","location"))
 impactTop <- ldply(targ,function(x){
@@ -61,10 +69,12 @@ impactTop <- ldply(targ,function(x){
   lessThan <- sub[sub$min_safetystk < sub$total_ss,]
   lessThan$increment <- (lessThan$total_ss - lessThan$min_safetystk) * lessThan$avedemqty
   lessThan$increment_dollars <- (lessThan$total_ss - lessThan$min_safetystk) * lessThan$avedemqty * lessThan$unitcost
+  lessThan$prevented <- (lessThan$sl - ifelse(is.na(lessThan$curr_sl),0,lessThan$curr_sl)) * lessThan$avedemqty
   
   data.frame(sl = as.numeric(x),
              ss_increase = sum(lessThan$increment),
              dollar_increase = sum(lessThan$increment_dollars),
              increase_items = nrow(lessThan),
-             totalItems = nrow(sub))
+             totalItems = nrow(sub),
+             prevented = sum(lessThan$prevented))
 })
